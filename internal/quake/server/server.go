@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"github.com/criticalstack/quake-kube/pkg/reporters/metrics"
 	"io/ioutil"
 	"log"
 	"net"
@@ -9,34 +10,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"sigs.k8s.io/yaml"
 
 	quakenet "github.com/criticalstack/quake-kube/internal/quake/net"
 	"github.com/criticalstack/quake-kube/internal/util/exec"
-)
-
-var (
-	actrvePlayers = promauto.NewGauge(prometheus.GaugeOpts{
-		Name: "quake_active_players",
-		Help: "The current number of active players",
-	})
-
-	scores = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "quake_player_scores",
-		Help: "Current scores by player, by map",
-	}, []string{"player", "map"})
-
-	pings = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "quake_player_pings",
-		Help: "Current ping by player",
-	}, []string{"player"})
-
-	configReloads = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "quake_config_reloads",
-		Help: "Config file reload count",
-	})
 )
 
 type Server struct {
@@ -112,13 +89,7 @@ func (s *Server) Start(ctx context.Context) error {
 					log.Printf("metrics: get status failed %v", err)
 					continue
 				}
-				actrvePlayers.Set(float64(len(status.Players)))
-				for _, p := range status.Players {
-					if mapname, ok := status.Configuration["mapname"]; ok {
-						scores.WithLabelValues(p.Name, mapname).Set(float64(p.Score))
-					}
-					pings.WithLabelValues(p.Name).Set(float64(p.Ping))
-				}
+				s.reportStatusMetrics(status)
 			case <-ctx.Done():
 				return
 			}
@@ -136,7 +107,7 @@ func (s *Server) Start(ctx context.Context) error {
 			if err := s.reload(); err != nil {
 				return err
 			}
-			configReloads.Inc()
+			metrics.ConfigReloads().Inc()
 			if err := cmd.Restart(ctx); err != nil {
 				return err
 			}
@@ -149,6 +120,16 @@ func (s *Server) Start(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+}
+
+func (s *Server) reportStatusMetrics(status *quakenet.StatusResponse) {
+	statusMetrics := &metrics.StatusMetrics{
+		Players: status.Players,
+	}
+	if mapName, ok := status.Configuration["mapname"]; ok {
+		statusMetrics.MapName = mapName
+	}
+	metrics.Report(statusMetrics)
 }
 
 func (s *Server) reload() error {
