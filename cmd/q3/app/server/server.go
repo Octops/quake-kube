@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/url"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	quakeserver "github.com/criticalstack/quake-kube/internal/quake/server"
 	httputil "github.com/criticalstack/quake-kube/internal/util/net/http"
 	"github.com/criticalstack/quake-kube/public"
+
+	sdk "agones.dev/agones/sdks/go"
 )
 
 var opts struct {
@@ -24,6 +27,7 @@ var opts struct {
 	AssetsDir     string
 	ConfigFile    string
 	WatchInterval time.Duration
+	WithAgones    bool
 }
 
 func NewCommand() *cobra.Command {
@@ -50,6 +54,37 @@ func NewCommand() *cobra.Command {
 			// TODO(chrism): only download what is in map config
 			if err := content.CopyAssets(csurl, opts.AssetsDir); err != nil {
 				return err
+			}
+
+			if opts.WithAgones {
+				log.Println("starting Agones SDK client")
+				s, err := sdk.NewSDK()
+				if err != nil {
+					return errors.Wrap(err, "Agones SDK could not be initialized")
+				}
+
+				if err := s.Ready(); err != nil {
+					log.Println("failed to make the server Ready")
+				}
+
+				go func() {
+					tick := time.Tick(2 * time.Second)
+					maxAttempts := 0
+					for {
+						if err := s.Health(); err != nil {
+							if maxAttempts > 5 {
+								log.Fatalf("Could not send health ping: %v", err)
+							}
+							maxAttempts++
+						}
+						select {
+						case <-ctx.Done():
+							log.Print("Stopped health pings")
+							return
+						case <-tick:
+						}
+					}
+				}()
 			}
 
 			go func() {
@@ -88,5 +123,6 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.ClientAddr, "client-addr", "0.0.0.0:8080", "client address <host>:<port>")
 	cmd.Flags().StringVar(&opts.ServerAddr, "server-addr", "0.0.0.0:27960", "dedicated server <host>:<port>")
 	cmd.Flags().DurationVar(&opts.WatchInterval, "watch-interval", 15*time.Second, "dedicated server <host>:<port>")
+	cmd.Flags().BoolVar(&opts.WithAgones, "with-agones", false, "use Agones SDK integration")
 	return cmd
 }
