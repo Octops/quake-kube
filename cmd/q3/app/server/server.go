@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
+	"github.com/criticalstack/quake-kube/pkg/extensions"
 	"net/url"
 	"time"
 
@@ -15,8 +15,6 @@ import (
 	quakeserver "github.com/criticalstack/quake-kube/internal/quake/server"
 	httputil "github.com/criticalstack/quake-kube/internal/util/net/http"
 	"github.com/criticalstack/quake-kube/public"
-
-	sdk "agones.dev/agones/sdks/go"
 )
 
 var opts struct {
@@ -56,37 +54,6 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 
-			if opts.WithAgones {
-				log.Println("starting Agones SDK client")
-				s, err := sdk.NewSDK()
-				if err != nil {
-					return errors.Wrap(err, "Agones SDK could not be initialized")
-				}
-
-				if err := s.Ready(); err != nil {
-					log.Println("failed to make the server Ready")
-				}
-
-				go func() {
-					tick := time.Tick(2 * time.Second)
-					maxAttempts := 0
-					for {
-						if err := s.Health(); err != nil {
-							if maxAttempts > 5 {
-								log.Fatalf("Could not send health ping: %v", err)
-							}
-							maxAttempts++
-						}
-						select {
-						case <-ctx.Done():
-							log.Print("Stopped health pings")
-							return
-						case <-tick:
-						}
-					}
-				}()
-			}
-
 			go func() {
 				s := quakeserver.Server{
 					Dir:           opts.AssetsDir,
@@ -94,8 +61,16 @@ func NewCommand() *cobra.Command {
 					ConfigFile:    opts.ConfigFile,
 					Addr:          opts.ServerAddr,
 				}
-				if err := s.Start(ctx); err != nil {
-					panic(err)
+
+				if opts.WithAgones {
+					agones := &extensions.Agones{}
+					if err := agones.Start(ctx, &s); err != nil {
+						panic(err)
+					}
+				} else {
+					if err := s.Start(ctx); err != nil {
+						panic(err)
+					}
 				}
 			}()
 
