@@ -1,11 +1,9 @@
 package server
 
 import (
-	sdk "agones.dev/agones/sdks/go"
 	"context"
 	"fmt"
-	quakenet "github.com/criticalstack/quake-kube/internal/quake/net"
-	"log"
+	"github.com/criticalstack/quake-kube/pkg/extensions"
 	"net/url"
 	"time"
 
@@ -56,12 +54,6 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 
-			if opts.WithAgones {
-				if err := startAgones(ctx, opts.ServerAddr); err != nil {
-					log.Printf("[Agones] Error: %v", err)
-				}
-			}
-
 			go func() {
 				s := quakeserver.Server{
 					Dir:           opts.AssetsDir,
@@ -69,8 +61,16 @@ func NewCommand() *cobra.Command {
 					ConfigFile:    opts.ConfigFile,
 					Addr:          opts.ServerAddr,
 				}
-				if err := s.Start(ctx); err != nil {
-					panic(err)
+
+				if opts.WithAgones {
+					agones := &extensions.Agones{}
+					if err := agones.Start(ctx, &s); err != nil {
+						panic(err)
+					}
+				} else {
+					if err := s.Start(ctx); err != nil {
+						panic(err)
+					}
 				}
 			}()
 
@@ -100,67 +100,4 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().DurationVar(&opts.WatchInterval, "watch-interval", 15*time.Second, "dedicated server <host>:<port>")
 	cmd.Flags().BoolVar(&opts.WithAgones, "with-agones", false, "use Agones SDK integration")
 	return cmd
-}
-
-func startAgones(ctx context.Context, addr string) error {
-	log.Println("[Agones] starting Agones SDK client")
-	s, err := sdk.NewSDK()
-	if err != nil {
-		return err
-	}
-
-	if err := s.Ready(); err != nil {
-		log.Println("[Agones] failed to make the server Ready")
-	}
-
-	go func() {
-		tick := time.Tick(2 * time.Second)
-		maxAttempts := 0
-		for {
-			if err := s.Health(); err != nil {
-				if maxAttempts > 5 {
-					log.Fatalf("[Agones] could not send health ping: %v", err)
-				}
-				maxAttempts++
-			} else {
-				maxAttempts = 0
-			}
-
-			select {
-			case <-ctx.Done():
-				log.Print("[Agones] stopped health pings")
-				return
-			case <-tick:
-			}
-		}
-	}()
-
-	go func() {
-		tick := time.Tick(5 * time.Second)
-		for {
-			if status, err := quakenet.GetStatus(addr); err == nil {
-				if err != nil {
-					log.Printf("[Agones] failed to get status from server: %s", err.Error())
-					continue
-				}
-				for _, p := range status.Players {
-					log.Printf("[Agones] player: %s", p.Name)
-
-					if _, err := s.Alpha().PlayerConnect(p.Name); err != nil {
-						log.Printf("[Agones] failed to register player: %s", err.Error())
-					}
-				}
-				log.Println("[Agones] status checked")
-			}
-
-			select {
-			case <-ctx.Done():
-				log.Print("[Agones] stopped status checks")
-				return
-			case <-tick:
-			}
-		}
-	}()
-
-	return nil
 }
