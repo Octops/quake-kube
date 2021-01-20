@@ -66,8 +66,9 @@ spec:
         - name: default
           containerPort: 8081
           protocol: TCP
-      health:
-        disabled: true
+# Disable should be false if the flag --with-agones=false
+#      health:
+#        disabled: true
       template:
         spec:
           containers:
