@@ -15,16 +15,19 @@ type Agones struct {
 	sdk    *sdk.SDK
 }
 
-func (a *Agones) Start(ctx context.Context, server *quakeserver.Server) error {
+func (a *Agones) Start(ctx context.Context) error {
 	if err := a.InitSdk(); err != nil {
 		return err
 	}
-	a.Server = server
+
+	if err := a.sdk.Ready(); err != nil {
+		return err
+	}
 
 	go a.StartHeathCheck(ctx)
 	go a.TrackStatus(ctx)
 
-	if err := server.Start(ctx); err != nil {
+	if err := a.Server.Start(ctx); err != nil {
 		return errors.Wrap(err, "failed to start server")
 	}
 
@@ -44,8 +47,10 @@ func (a *Agones) InitSdk() error {
 }
 
 func (a *Agones) StartHeathCheck(ctx context.Context) {
+	log.Print("[Agones] starting health check")
 	tick := time.Tick(2 * time.Second)
 	maxAttempts := 0
+
 	for {
 		if err := a.sdk.Health(); err != nil {
 			if maxAttempts > 5 {
@@ -53,6 +58,7 @@ func (a *Agones) StartHeathCheck(ctx context.Context) {
 			}
 			maxAttempts++
 		} else {
+			log.Print("[Agones] ping")
 			maxAttempts = 0
 		}
 

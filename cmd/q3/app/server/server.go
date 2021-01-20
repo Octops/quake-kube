@@ -63,8 +63,10 @@ func NewCommand() *cobra.Command {
 				}
 
 				if opts.WithAgones {
-					agones := &extensions.Agones{}
-					if err := agones.Start(ctx, &s); err != nil {
+					agones := &extensions.Agones{
+						Server: &s,
+					}
+					if err := agones.Start(ctx); err != nil {
 						panic(err)
 					}
 				} else {
